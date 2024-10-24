@@ -5,9 +5,8 @@ class ModelManager {
         this.refreshRunningModelsList();
         this.retryCount = 0;
         this.maxRetries = 3;
-        this.retryDelay = 2000; // 2 seconds
-        this.retryMultiplier = 1.5; // Exponential backoff multiplier
-        // Refresh running models list every 5 seconds
+        this.retryDelay = 2000;
+        this.retryMultiplier = 1.5;
         this.refreshInterval = setInterval(() => this.refreshRunningModelsList(), 5000);
     }
 
@@ -43,7 +42,6 @@ class ModelManager {
         const alert = document.createElement('div');
         alert.className = `alert alert-${isTransient ? 'warning' : 'danger'} mb-3`;
         
-        // Create installation instructions if needed
         if (message.includes("n'est pas installé")) {
             alert.innerHTML = `
                 <h5 class="alert-heading">Installation requise</h5>
@@ -96,7 +94,6 @@ class ModelManager {
             message += ` (Tentative ${attempt})`;
         }
         
-        // Add help text based on error type
         if (errorMsg.toLowerCase().includes('connexion')) {
             message += "\nVérifiez que le service Ollama est démarré et accessible.";
         } else if (errorMsg.toLowerCase().includes('installé')) {
@@ -163,7 +160,7 @@ class ModelManager {
                 if (retryCount < maxRetries) {
                     console.log(`Waiting ${delay}ms before retry...`);
                     await new Promise(resolve => setTimeout(resolve, delay));
-                    delay *= this.retryMultiplier; // Exponential backoff
+                    delay *= this.retryMultiplier;
                     continue;
                 }
                 throw error;
@@ -324,7 +321,14 @@ class ModelManager {
         
         tbody.innerHTML = '';
 
-        if (!Array.isArray(models) || models.length === 0) {
+        if (!Array.isArray(models)) {
+            const row = document.createElement('tr');
+            row.innerHTML = '<td colspan="3" class="text-center text-muted">Erreur lors de la récupération des modèles</td>';
+            tbody.appendChild(row);
+            return;
+        }
+
+        if (models.length === 0) {
             const row = document.createElement('tr');
             row.innerHTML = '<td colspan="3" class="text-center text-muted">Aucun modèle en cours d\'exécution</td>';
             tbody.appendChild(row);
@@ -337,7 +341,11 @@ class ModelManager {
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td>${model.name}</td>
-                <td><span class="badge bg-success">${model.status || 'en cours'}</span></td>
+                <td>
+                    <span class="badge bg-success">
+                        ${model.id ? `En cours (${model.id})` : 'En cours'}
+                    </span>
+                </td>
                 <td>
                     <div class="btn-group">
                         <button class="btn btn-sm btn-secondary" onclick="benchmarkManager.startBenchmark('${model.name}')">

@@ -293,7 +293,7 @@ class OllamaClient:
             }
 
     def list_running_models(self):
-        """List running models using 'ollama ls' command"""
+        """List only currently running models using 'ollama ls' command"""
         logger.info("Fetching running models...")
 
         # First check if Ollama is installed
@@ -302,19 +302,35 @@ class OllamaClient:
             return {"models": [], "error": error}
             
         try:
-            output = self._execute_command('ls')
-            logger.debug(f"Command output: {output}")
+            # Execute 'ollama ls' command to get running models
+            cmd = ['ollama', 'ps']  # Use 'ps' instead of 'ls' to show only running models
+            logger.info(f"Executing command: {' '.join(cmd)}")
             
-            if isinstance(output, dict) and "error" in output:
-                return {"models": [], "error": output["error"]}
+            result = subprocess.run(cmd,
+                                capture_output=True,
+                                text=True,
+                                timeout=self.timeout)
+            
+            # Log complete output for debugging
+            logger.debug(f"Command stdout: {result.stdout}")
+            logger.debug(f"Command stderr: {result.stderr}")
+            
+            if result.returncode != 0:
+                error_msg = result.stderr.strip() or "Erreur lors de la récupération des modèles en cours d'exécution"
+                logger.error(f"Command failed: {error_msg}")
+                return {
+                    "models": [],
+                    "error": f"Échec de la commande: {error_msg}"
+                }
             
             models = []
-            lines = output.splitlines() if isinstance(output, str) else []
+            lines = result.stdout.strip().splitlines()
             
             # Skip header line if present
             if lines and "NAME" in lines[0].upper():
                 lines = lines[1:]
             
+            # Parse each line to extract running model information
             for line in lines:
                 if not line.strip():
                     continue
@@ -324,21 +340,24 @@ class OllamaClient:
                     model_info = {
                         "name": parts[0],
                         "status": "en cours",
-                        "id": parts[1] if len(parts) > 1 else "",
-                        "size": 0  # Size not available in ls output
+                        "id": parts[1] if len(parts) > 1 else ""
                     }
                     models.append(model_info)
             
             logger.info(f"Found {len(models)} running models")
             return {"models": models}
             
+        except subprocess.TimeoutExpired:
+            error_msg = "Le délai d'attente a expiré lors de la récupération des modèles"
+            logger.error(error_msg)
+            return {"models": [], "error": error_msg}
+            
         except Exception as e:
             error_msg = f"Impossible de lister les modèles en cours d'exécution: {str(e)}"
             logger.error(f"Unexpected error in list_running_models: {str(e)}")
             return {
                 "models": [],
-                "error":
-                f"{error_msg}. Vérifiez que Ollama est installé et que le service est démarré."
+                "error": f"{error_msg}. Vérifiez que Ollama est installé et que le service est démarré."
             }
 
     def stop_model(self, model_name):
