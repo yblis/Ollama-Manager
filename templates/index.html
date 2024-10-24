@@ -73,6 +73,32 @@
             </div>
         </div>
 
+        <!-- Installed Models -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">Modèles Installés</h5>
+                <div class="input-group w-50">
+                    <input type="text" class="form-control" id="model-name" placeholder="Entrez le nom du modèle">
+                    <button class="btn btn-secondary" id="pull-model">Télécharger le Modèle</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Nom du Modèle</th>
+                                <th>Taille</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="models-list">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- Running Models -->
         <div class="card mb-4">
             <div class="card-header">
@@ -118,32 +144,6 @@
                             </tbody>
                         </table>
                     </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Installed Models -->
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="card-title mb-0">Modèles Installés</h5>
-                <div class="input-group w-50">
-                    <input type="text" class="form-control" id="model-name" placeholder="Entrez le nom du modèle">
-                    <button class="btn btn-secondary" id="pull-model">Télécharger le Modèle</button>
-                </div>
-            </div>
-            <div class="card-body">
-                <div class="table-responsive">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Nom du Modèle</th>
-                                <th>Taille</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="models-list">
-                        </tbody>
-                    </table>
                 </div>
             </div>
         </div>
