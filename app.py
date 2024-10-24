@@ -6,6 +6,7 @@ from utils.ollama_client import OllamaClient
 from utils.benchmark import ModelBenchmark
 import time
 import traceback
+from urllib.parse import urlparse
 
 # Configure logging
 logging.basicConfig(
@@ -18,6 +19,14 @@ app = Flask(__name__)
 gpu_monitor = GPUMonitor()
 ollama_client = OllamaClient()
 model_benchmark = ModelBenchmark(ollama_client)
+
+def validate_url(url):
+    """Validate URL format"""
+    try:
+        result = urlparse(url)
+        return bool(result.scheme and result.netloc)
+    except:
+        return False
 
 @app.route('/')
 def index():
@@ -33,10 +42,18 @@ def check_server():
                 "message": "URL du serveur manquante"
             }), 400
         
-        status = ollama_client.set_server_url(data['url'])
+        url = data['url']
+        if not validate_url(url):
+            return jsonify({
+                "status": "error",
+                "message": "Format d'URL invalide"
+            }), 400
+        
+        status = ollama_client.set_server_url(url)
         return jsonify(status)
     except Exception as e:
         logger.error(f"Server check failed: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({
             "status": "error",
             "message": f"Erreur lors de la vérification du serveur: {str(e)}"
@@ -52,10 +69,18 @@ def set_server():
                 "message": "URL du serveur manquante"
             }), 400
         
-        status = ollama_client.set_server_url(data['url'])
+        url = data['url']
+        if not validate_url(url):
+            return jsonify({
+                "status": "error",
+                "message": "Format d'URL invalide"
+            }), 400
+        
+        status = ollama_client.set_server_url(url)
         return jsonify(status)
     except Exception as e:
         logger.error(f"Server configuration failed: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({
             "status": "error",
             "message": f"Erreur lors de la configuration du serveur: {str(e)}"
@@ -65,14 +90,31 @@ def set_server():
 def get_models():
     try:
         result = ollama_client.list_models()
-        logger.info(f"Listed models: {len(result.get('models', []))} found")
+        if not isinstance(result, dict):
+            logger.error(f"Invalid response format from list_models: {result}")
+            return jsonify({
+                "models": [],
+                "error": "Format de réponse invalide"
+            })
+
         if "error" in result:
             logger.error(f"Error listing models: {result['error']}")
-            return jsonify({"models": [], "error": result["error"]})
-        return jsonify(result)
+            return jsonify({
+                "models": [],
+                "error": result["error"]
+            })
+
+        models = result.get('models', [])
+        logger.info(f"Successfully listed {len(models)} models")
+        return jsonify({"models": models})
+
     except Exception as e:
         logger.error(f"Failed to get models: {str(e)}")
-        return jsonify({"models": [], "error": str(e)})
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            "models": [],
+            "error": f"Impossible de récupérer les modèles: {str(e)}"
+        })
 
 @app.route('/api/models/running')
 def get_running_models():
@@ -116,75 +158,95 @@ def get_running_models():
 @app.route('/api/models/stop/<model_name>', methods=['POST'])
 def stop_model(model_name):
     try:
+        if not model_name:
+            return jsonify({
+                "status": "error",
+                "error": "Nom du modèle non spécifié"
+            }), 400
+
         logger.info(f"Attempting to stop model: {model_name}")
         result = ollama_client.stop_model(model_name)
+        
+        if not isinstance(result, dict):
+            return jsonify({
+                "status": "error",
+                "error": "Format de réponse invalide"
+            })
+
         if "error" in result:
             logger.error(f"Error stopping model {model_name}: {result['error']}")
-            return jsonify({"status": "error", "error": result["error"]})
+            return jsonify({
+                "status": "error",
+                "error": result["error"]
+            })
+
         return jsonify(result)
+
     except Exception as e:
         logger.error(f"Failed to stop model {model_name}: {str(e)}")
-        return jsonify({"status": "error", "error": str(e)})
-
-@app.route('/api/models/pull/<model_name>', methods=['POST'])
-def pull_model(model_name):
-    try:
-        logger.info(f"Attempting to pull model: {model_name}")
-        result = ollama_client.pull_model(model_name)
-        if "error" in result:
-            logger.error(f"Error pulling model {model_name}: {result['error']}")
-            return jsonify({"status": "error", "error": result["error"]})
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"Failed to pull model {model_name}: {str(e)}")
-        return jsonify({"status": "error", "error": str(e)})
-
-@app.route('/api/models/delete/<model_name>', methods=['DELETE'])
-def delete_model(model_name):
-    try:
-        logger.info(f"Attempting to delete model: {model_name}")
-        result = ollama_client.delete_model(model_name)
-        if "error" in result:
-            logger.error(f"Error deleting model {model_name}: {result['error']}")
-            return jsonify({"status": "error", "error": result["error"]})
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"Failed to delete model {model_name}: {str(e)}")
-        return jsonify({"status": "error", "error": str(e)})
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            "status": "error",
+            "error": f"Impossible d'arrêter le modèle {model_name}: {str(e)}"
+        })
 
 @app.route('/api/models/benchmark/<model_name>', methods=['POST'])
 def benchmark_model(model_name):
     try:
+        if not model_name:
+            return jsonify({
+                "status": "error",
+                "error": "Nom du modèle non spécifié"
+            }), 400
+
         logger.info(f"Starting benchmark for model: {model_name}")
         result = model_benchmark.start_benchmark(model_name)
+        
+        if not isinstance(result, dict):
+            return jsonify({
+                "status": "error",
+                "error": "Format de réponse invalide"
+            })
+
         if "error" in result:
             logger.error(f"Error benchmarking model {model_name}: {result['error']}")
-            return jsonify({"status": "error", "error": result["error"]})
-        return jsonify({"status": "success", "result": result})
+            return jsonify({
+                "status": "error",
+                "error": result["error"]
+            })
+
+        return jsonify({
+            "status": "success",
+            "result": result
+        })
+
     except Exception as e:
         logger.error(f"Failed to benchmark model {model_name}: {str(e)}")
-        return jsonify({"status": "error", "error": str(e)})
-
-@app.route('/api/models/benchmark/<model_name>/status')
-def get_benchmark_status(model_name):
-    try:
-        result = model_benchmark.get_benchmark_status(model_name)
-        if "error" in result:
-            logger.error(f"Error getting benchmark status for {model_name}: {result['error']}")
-            return jsonify({"status": "error", "error": result["error"]})
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"Failed to get benchmark status for {model_name}: {str(e)}")
-        return jsonify({"status": "error", "error": str(e)})
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            "status": "error",
+            "error": f"Impossible de lancer le benchmark pour {model_name}: {str(e)}"
+        })
 
 @app.route('/api/models/benchmark/results')
 def get_benchmark_results():
     try:
         result = model_benchmark.get_all_results()
+        if not isinstance(result, dict):
+            return jsonify({
+                "status": "error",
+                "error": "Format de réponse invalide"
+            })
+
         return jsonify(result)
+
     except Exception as e:
         logger.error(f"Failed to get benchmark results: {str(e)}")
-        return jsonify({"status": "error", "error": str(e)})
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            "status": "error",
+            "error": f"Impossible de récupérer les résultats du benchmark: {str(e)}"
+        })
 
 @app.route('/api/gpu/stats')
 def gpu_stats_stream():
@@ -197,6 +259,7 @@ def gpu_stats_stream():
                 time.sleep(1)
             except Exception as e:
                 logger.error(f"Error generating GPU stats: {str(e)}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
                 time.sleep(1)
 

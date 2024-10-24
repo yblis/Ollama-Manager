@@ -5,6 +5,7 @@ import os
 import logging
 import subprocess
 import json
+from urllib.parse import urlparse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,13 +16,35 @@ class OllamaClient:
         self.max_retries = 3
         self.retry_delay = 1  # seconds
         self.connection_status = self.check_connection()
+        self.timeout = 10  # seconds
 
     def _get_server_url(self):
         """Get server URL from environment or default"""
         return os.environ.get('OLLAMA_SERVER_URL', 'http://localhost:11434')
 
+    def _validate_url(self, url):
+        """Validate URL format"""
+        try:
+            result = urlparse(url)
+            if not all([result.scheme, result.netloc]):
+                return False, "L'URL du serveur est invalide. Format attendu: http(s)://host:port"
+            if result.scheme not in ['http', 'https']:
+                return False, "Le protocole doit être HTTP ou HTTPS"
+            return True, None
+        except Exception as e:
+            logger.error(f"URL validation failed: {str(e)}")
+            return False, "Format d'URL invalide"
+
     def set_server_url(self, url):
         """Update server URL and check connection"""
+        is_valid, error = self._validate_url(url)
+        if not is_valid:
+            logger.error(f"Invalid server URL: {error}")
+            return {
+                "status": "error",
+                "message": error
+            }
+
         self.base_url = url
         self.connection_status = self.check_connection()
         return self.connection_status
@@ -29,142 +52,223 @@ class OllamaClient:
     def check_connection(self):
         """Check if Ollama server is available"""
         try:
-            # Try to execute 'ollama --version' to check if ollama is installed and accessible
-            result = subprocess.run(['ollama', '--version'], capture_output=True, text=True, timeout=2)
-            logger.debug(f"Connection check output: {result.stdout}")
-            if result.returncode == 0:
+            # First validate URL format
+            is_valid, error = self._validate_url(self.base_url)
+            if not is_valid:
+                return {
+                    "status": "disconnected",
+                    "url": self.base_url,
+                    "message": error
+                }
+
+            # Try API connection first
+            try:
+                response = requests.get(f"{self.base_url}/api/version", timeout=2)
+                response.raise_for_status()
                 return {"status": "connected", "url": self.base_url}
+            except requests.exceptions.ConnectionError:
+                logger.error("Connection to API failed, checking if Ollama is installed...")
+            except Exception as e:
+                logger.error(f"API check failed: {str(e)}")
+
+            # If API fails, check if Ollama is installed
+            result = subprocess.run(['ollama', '--version'], capture_output=True, text=True, timeout=2)
+            logger.debug(f"Ollama version check output: {result.stdout}")
+            
+            if result.returncode == 0:
+                return {
+                    "status": "disconnected",
+                    "url": self.base_url,
+                    "message": "Ollama est installé mais le serveur n'est pas accessible. Veuillez démarrer le service."
+                }
             else:
-                logger.error(f"Connection check failed with return code: {result.returncode}")
-                raise Exception("Ollama non disponible")
+                logger.error(f"Ollama check failed with return code: {result.returncode}")
+                return {
+                    "status": "disconnected",
+                    "url": self.base_url,
+                    "message": "Le service Ollama n'est pas disponible ou n'est pas correctement installé."
+                }
+
         except subprocess.TimeoutExpired:
-            logger.error("Timeout lors de la vérification d'Ollama")
+            logger.error("Timeout checking Ollama")
             return {
                 "status": "disconnected",
                 "url": self.base_url,
-                "message": "Le serveur Ollama ne répond pas. Veuillez vérifier qu'il est en cours d'exécution."
+                "message": "Le délai de connexion a expiré. Veuillez vérifier que le serveur est accessible."
             }
         except FileNotFoundError:
-            logger.error("Ollama command not found")
+            logger.error("Ollama not installed")
             return {
                 "status": "disconnected",
                 "url": self.base_url,
                 "message": "Ollama n'est pas installé sur le système. Veuillez l'installer avant de continuer."
             }
-        except subprocess.SubprocessError as e:
-            logger.error(f"Erreur lors de l'exécution d'Ollama: {str(e)}")
-            return {
-                "status": "disconnected",
-                "url": self.base_url,
-                "message": "Impossible d'exécuter Ollama. Veuillez vérifier l'installation."
-            }
         except Exception as e:
-            logger.error(f"Connection check failed: {str(e)}")
+            logger.error(f"Unexpected error in check_connection: {str(e)}")
             return {
                 "status": "disconnected",
                 "url": self.base_url,
-                "message": "Le serveur Ollama n'est pas disponible. Veuillez vérifier l'installation."
+                "message": f"Erreur inattendue lors de la vérification de la connexion: {str(e)}"
             }
 
-    def _execute_command(self, command, args=None, timeout=10):
-        """Execute ollama command with proper error handling"""
+    def _make_request(self, method, endpoint, json=None, retry_count=0):
+        """Make HTTP request with retries and proper error handling"""
         if self.connection_status["status"] == "disconnected":
-            error_msg = self.connection_status.get("message", "Service Ollama non disponible")
-            logger.error(f"Command execution failed - disconnected: {error_msg}")
-            return {"error": error_msg}
+            return {"error": self.connection_status["message"]}
 
         try:
-            cmd = ['ollama'] + command.split() + (args if args else [])
-            logger.info(f"Executing command: {' '.join(cmd)}")
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+            response = requests.request(
+                method=method,
+                url=f"{self.base_url}{endpoint}",
+                json=json,
+                timeout=self.timeout
             )
-            
-            logger.debug(f"Command stdout: {result.stdout}")
-            if result.stderr:
-                logger.error(f"Command stderr: {result.stderr}")
+            response.raise_for_status()
+            return response.json() if response.text else {}
 
-            if result.returncode != 0:
-                error_msg = f"Erreur lors de l'exécution de la commande: {result.stderr or 'Code de retour non nul'}"
-                logger.error(error_msg)
-                return {"error": error_msg}
-                
-            if not result.stdout.strip():
-                return []  # Empty output is valid for some commands
-                
-            return result.stdout.strip()
-            
-        except subprocess.TimeoutExpired:
-            error_msg = "Le délai d'exécution de la commande a expiré"
+        except requests.exceptions.ConnectTimeout:
+            error_msg = "Le délai de connexion au serveur a expiré"
+            logger.error(error_msg)
+            if retry_count < self.max_retries - 1:
+                time.sleep(self.retry_delay)
+                return self._make_request(method, endpoint, json, retry_count + 1)
+            return {"error": error_msg}
+
+        except requests.exceptions.ConnectionError:
+            error_msg = "Impossible de se connecter au serveur Ollama"
+            logger.error(error_msg)
+            if retry_count < self.max_retries - 1:
+                time.sleep(self.retry_delay)
+                return self._make_request(method, endpoint, json, retry_count + 1)
+            return {"error": error_msg}
+
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                error_msg = f"Service non trouvé: {endpoint}"
+            else:
+                error_msg = f"Erreur HTTP {e.response.status_code}"
             logger.error(error_msg)
             return {"error": error_msg}
-            
-        except FileNotFoundError:
-            error_msg = "Ollama n'est pas installé sur le système"
-            logger.error(error_msg)
-            return {"error": error_msg}
-            
-        except subprocess.SubprocessError as e:
-            error_msg = f"Erreur lors de l'exécution de la commande: {str(e)}"
-            logger.error(error_msg)
-            return {"error": error_msg}
-            
+
         except Exception as e:
-            error_msg = f"Erreur inattendue lors de l'exécution de la commande: {str(e)}"
+            error_msg = f"Erreur inattendue: {str(e)}"
             logger.error(error_msg)
+            if retry_count < self.max_retries - 1:
+                time.sleep(self.retry_delay)
+                return self._make_request(method, endpoint, json, retry_count + 1)
             return {"error": error_msg}
 
-    def list_running_models(self):
-        """List running models using 'ollama ps' command"""
+    def list_models(self):
+        """List all available models"""
         try:
-            logger.info("Fetching running models...")
-            output = self._execute_command('ps')
-            
-            # Check if output is an error response
-            if isinstance(output, dict) and "error" in output:
-                error_msg = output["error"]
-                logger.error(f"Failed to list running models: {error_msg}")
+            response = self._make_request("GET", "/api/tags")
+            if not response:
                 return {
                     "models": [],
-                    "error": error_msg
+                    "error": "Aucune réponse du serveur"
                 }
-            
-            # Handle empty output
-            if not output or (isinstance(output, list) and len(output) == 0):
-                logger.info("No running models found")
-                return {"models": []}
 
-            # Parse the command output
+            if "error" in response:
+                logger.error(f"Error listing models: {response['error']}")
+                return {
+                    "models": [],
+                    "error": response["error"]
+                }
+
             models = []
-            # Skip first line (header) if output has content
-            lines = output.splitlines()[1:] if isinstance(output, str) else []
+            if isinstance(response, list):
+                for model in response:
+                    if isinstance(model, dict):
+                        models.append({
+                            "name": model.get("name", "unknown"),
+                            "size": model.get("size", 0),
+                            "digest": model.get("digest", ""),
+                            "modified_at": model.get("modified_at", "")
+                        })
+
+            logger.info(f"Successfully listed {len(models)} models")
+            return {"models": models}
+
+        except Exception as e:
+            error_msg = f"Impossible de lister les modèles: {str(e)}"
+            logger.error(error_msg)
+            return {
+                "models": [],
+                "error": error_msg
+            }
+
+    def list_running_models(self):
+        """List running models using API"""
+        try:
+            logger.info("Fetching running models...")
+            response = self._make_request("GET", "/api/tags")
             
-            for line in lines:
-                if not line.strip():
-                    continue
-                    
-                parts = line.split()
-                if len(parts) >= 1:
-                    model_info = {
-                        "name": parts[0],
-                        "status": "en cours",
-                        "size": 0  # Size not available in ps output
-                    }
-                    if len(parts) >= 2:
-                        model_info["id"] = parts[1]
-                    models.append(model_info)
+            if not response:
+                return {
+                    "models": [],
+                    "error": "Aucune réponse du serveur"
+                }
+
+            if "error" in response:
+                logger.error(f"Error listing running models: {response['error']}")
+                return {
+                    "models": [],
+                    "error": response["error"]
+                }
+
+            models = []
+            if isinstance(response, list):
+                for model in response:
+                    if isinstance(model, dict) and model.get("status") == "ready":
+                        models.append({
+                            "name": model.get("name", "unknown"),
+                            "status": "en cours",
+                            "id": model.get("id", ""),
+                            "size": model.get("size", 0)
+                        })
 
             logger.info(f"Found {len(models)} running models")
             return {"models": models}
-            
+
         except Exception as e:
             error_msg = f"Impossible de lister les modèles en cours d'exécution: {str(e)}"
             logger.error(f"Unexpected error in list_running_models: {str(e)}")
             return {
                 "models": [],
+                "error": error_msg
+            }
+
+    def stop_model(self, model_name):
+        """Stop a running model"""
+        if not model_name:
+            return {
+                "status": "error",
+                "error": "Nom du modèle non spécifié"
+            }
+
+        try:
+            response = self._make_request("POST", "/api/stop", json={"name": model_name})
+            if not response:
+                return {
+                    "status": "error",
+                    "error": "Aucune réponse du serveur"
+                }
+
+            if "error" in response:
+                return {
+                    "status": "error",
+                    "error": response["error"]
+                }
+
+            return {
+                "status": "success",
+                "message": f"Modèle {model_name} arrêté avec succès"
+            }
+
+        except Exception as e:
+            error_msg = f"Impossible d'arrêter le modèle {model_name}: {str(e)}"
+            logger.error(f"Failed to stop model {model_name}: {str(e)}")
+            return {
+                "status": "error",
                 "error": error_msg
             }
