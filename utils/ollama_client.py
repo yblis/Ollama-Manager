@@ -24,6 +24,24 @@ class OllamaClient:
         """Get server URL from environment or default"""
         return os.environ.get('OLLAMA_SERVER_URL', 'http://localhost:11434')
 
+    def _check_ollama_installed(self):
+        """Check if Ollama is installed on the system"""
+        try:
+            result = subprocess.run(['which', 'ollama'],
+                                 capture_output=True,
+                                 text=True,
+                                 timeout=2)
+            if result.returncode != 0:
+                logger.error("Ollama not found in system PATH")
+                return False, "Ollama n'est pas installé. Veuillez installer Ollama avant de continuer: https://ollama.ai/download"
+            return True, None
+        except subprocess.TimeoutExpired:
+            logger.error("Timeout checking Ollama installation")
+            return False, "Le délai de vérification de l'installation a expiré"
+        except Exception as e:
+            logger.error(f"Error checking Ollama installation: {str(e)}")
+            return False, f"Erreur lors de la vérification de l'installation: {str(e)}"
+
     def _validate_url(self, url):
         """Validate URL format"""
         try:
@@ -40,7 +58,16 @@ class OllamaClient:
     def check_connection(self):
         """Check if Ollama server is available"""
         try:
-            # First validate URL format
+            # First check if Ollama is installed
+            is_installed, error = self._check_ollama_installed()
+            if not is_installed:
+                return {
+                    "status": "disconnected",
+                    "url": self.base_url,
+                    "message": error
+                }
+
+            # Then validate URL format
             is_valid, error = self._validate_url(self.base_url)
             if not is_valid:
                 return {
@@ -49,59 +76,35 @@ class OllamaClient:
                     "message": error
                 }
 
-            # Try API connection first
+            # Try API connection
             try:
                 response = requests.get(f"{self.base_url}/api/version",
                                      timeout=2)
                 response.raise_for_status()
+                logger.info("Successfully connected to Ollama API")
                 return {"status": "connected", "url": self.base_url}
             except requests.exceptions.ConnectionError:
-                logger.error(
-                    "Connection to API failed, checking if Ollama is installed..."
-                )
+                logger.error("Connection to API failed, checking service status")
+                # Check if service is running
+                service_check = subprocess.run(['pgrep', 'ollama'],
+                                           capture_output=True,
+                                           text=True)
+                if service_check.returncode != 0:
+                    return {
+                        "status": "disconnected",
+                        "url": self.base_url,
+                        "message":
+                        "Le service Ollama n'est pas démarré. Veuillez démarrer le service avec la commande 'ollama serve'"
+                    }
             except Exception as e:
                 logger.error(f"API check failed: {str(e)}")
-
-            # If API fails, check if Ollama is installed
-            result = subprocess.run(['ollama', '--version'],
-                                 capture_output=True,
-                                 text=True,
-                                 timeout=2)
-            logger.debug(f"Ollama version check output: {result.stdout}")
-
-            if result.returncode == 0:
                 return {
                     "status": "disconnected",
                     "url": self.base_url,
                     "message":
-                    "Ollama est installé mais le serveur n'est pas accessible. Veuillez démarrer le service."
-                }
-            else:
-                logger.error(
-                    f"Ollama check failed with return code: {result.returncode}")
-                return {
-                    "status": "disconnected",
-                    "url": self.base_url,
-                    "message":
-                    "Le service Ollama n'est pas disponible ou n'est pas correctement installé."
+                    f"Erreur de connexion à l'API: {str(e)}. Vérifiez que le service est démarré."
                 }
 
-        except subprocess.TimeoutExpired:
-            logger.error("Timeout checking Ollama")
-            return {
-                "status": "disconnected",
-                "url": self.base_url,
-                "message":
-                "Le délai de connexion a expiré. Veuillez vérifier que le serveur est accessible."
-            }
-        except FileNotFoundError:
-            logger.error("Ollama not installed")
-            return {
-                "status": "disconnected",
-                "url": self.base_url,
-                "message":
-                "Ollama n'est pas installé sur le système. Veuillez l'installer avant de continuer."
-            }
         except Exception as e:
             logger.error(f"Unexpected error in check_connection: {str(e)}")
             return {
@@ -125,20 +128,30 @@ class OllamaClient:
     def _execute_command(self, command, args=None):
         """Execute Ollama command with proper error handling"""
         try:
+            # First verify Ollama is installed
+            is_installed, error = self._check_ollama_installed()
+            if not is_installed:
+                return {"error": error}
+
             cmd = ['ollama'] + command.split() + (args if args else [])
             logger.info(f"Executing command: {' '.join(cmd)}")
             
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout
-            )
+            result = subprocess.run(cmd,
+                                capture_output=True,
+                                text=True,
+                                timeout=self.timeout)
+            
+            # Log complete output for debugging
+            logger.debug(f"Command stdout: {result.stdout}")
+            logger.debug(f"Command stderr: {result.stderr}")
             
             if result.returncode != 0:
                 error_msg = result.stderr.strip() or "Erreur lors de l'exécution de la commande"
                 logger.error(f"Command failed: {error_msg}")
-                return {"error": error_msg}
+                return {
+                    "error":
+                    f"Échec de la commande Ollama: {error_msg}. Vérifiez que le service est démarré."
+                }
                 
             return result.stdout.strip()
             
@@ -147,33 +160,28 @@ class OllamaClient:
             logger.error(error_msg)
             return {"error": error_msg}
             
-        except FileNotFoundError:
-            error_msg = "Ollama n'est pas installé sur le système"
-            logger.error(error_msg)
-            return {"error": error_msg}
-            
         except Exception as e:
-            error_msg = f"Erreur inattendue lors de l'exécution de la commande: {str(e)}"
+            error_msg = f"Erreur lors de l'exécution de la commande: {str(e)}"
             logger.error(error_msg)
             return {"error": error_msg}
 
     def _make_request(self, method, endpoint, json=None, retry_count=0):
         """Make HTTP request with retries and proper error handling"""
         if self.connection_status["status"] == "disconnected":
-            logger.error(f"Cannot make request - disconnected: {self.connection_status['message']}")
+            logger.error(
+                f"Cannot make request - disconnected: {self.connection_status['message']}"
+            )
             return {"error": self.connection_status["message"]}
 
         try:
-            logger.debug(f"Making {method} request to {endpoint}")
+            logger.info(f"Making {method} request to {endpoint}")
             if json:
                 logger.debug(f"Request payload: {json}")
                 
-            response = requests.request(
-                method=method,
-                url=f"{self.base_url}{endpoint}",
-                json=json,
-                timeout=self.timeout
-            )
+            response = requests.request(method=method,
+                                    url=f"{self.base_url}{endpoint}",
+                                    json=json,
+                                    timeout=self.timeout)
             
             logger.debug(f"Response status: {response.status_code}")
             if response.text:
@@ -192,7 +200,7 @@ class OllamaClient:
             return {"error": error_msg}
 
         except requests.exceptions.ConnectionError:
-            error_msg = "Impossible de se connecter au serveur Ollama"
+            error_msg = "Impossible de se connecter au serveur Ollama. Vérifiez que le service est démarré."
             logger.error(error_msg)
             if retry_count < self.max_retries - 1:
                 logger.info(f"Retrying request ({retry_count + 1}/{self.max_retries})")
@@ -221,10 +229,15 @@ class OllamaClient:
         """List all available models with API fallback to command line"""
         logger.info("Attempting to list models...")
         
-        # First try API endpoint
+        # First check if Ollama is installed
+        is_installed, error = self._check_ollama_installed()
+        if not is_installed:
+            return {"models": [], "error": error}
+
+        # Try API endpoint first
         try:
             response = self._make_request("GET", "/api/tags")
-            if not response or "error" not in response:
+            if response and "error" not in response:
                 models = []
                 if isinstance(response, list):
                     for model in response:
@@ -246,7 +259,10 @@ class OllamaClient:
         try:
             output = self._execute_command('list')
             if isinstance(output, dict) and "error" in output:
-                return {"models": [], "error": output["error"]}
+                return {
+                    "models": [],
+                    "error": output["error"]
+                }
                 
             models = []
             lines = output.splitlines() if isinstance(output, str) else []
@@ -270,16 +286,26 @@ class OllamaClient:
         except Exception as e:
             error_msg = f"Impossible de lister les modèles: {str(e)}"
             logger.error(error_msg)
-            return {"models": [], "error": error_msg}
+            return {
+                "models": [],
+                "error":
+                f"{error_msg}. Vérifiez que Ollama est installé et que le service est démarré."
+            }
 
     def list_running_models(self):
         """List running models using 'ollama ls' command"""
+        logger.info("Fetching running models...")
+
+        # First check if Ollama is installed
+        is_installed, error = self._check_ollama_installed()
+        if not is_installed:
+            return {"models": [], "error": error}
+            
         try:
-            logger.info("Fetching running models...")
             output = self._execute_command('ls')
+            logger.debug(f"Command output: {output}")
             
             if isinstance(output, dict) and "error" in output:
-                logger.error(f"Command failed: {output['error']}")
                 return {"models": [], "error": output["error"]}
             
             models = []
@@ -309,15 +335,26 @@ class OllamaClient:
         except Exception as e:
             error_msg = f"Impossible de lister les modèles en cours d'exécution: {str(e)}"
             logger.error(f"Unexpected error in list_running_models: {str(e)}")
-            return {"models": [], "error": error_msg}
+            return {
+                "models": [],
+                "error":
+                f"{error_msg}. Vérifiez que Ollama est installé et que le service est démarré."
+            }
 
     def stop_model(self, model_name):
         """Stop a running model"""
         if not model_name:
             return {"status": "error", "error": "Nom du modèle non spécifié"}
 
+        # First check if Ollama is installed
+        is_installed, error = self._check_ollama_installed()
+        if not is_installed:
+            return {"status": "error", "error": error}
+
         try:
-            response = self._make_request("POST", "/api/stop", json={"name": model_name})
+            response = self._make_request("POST",
+                                      "/api/stop",
+                                      json={"name": model_name})
             if not response:
                 return {"status": "error", "error": "Aucune réponse du serveur"}
 
@@ -332,4 +369,8 @@ class OllamaClient:
         except Exception as e:
             error_msg = f"Impossible d'arrêter le modèle {model_name}: {str(e)}"
             logger.error(f"Failed to stop model {model_name}: {str(e)}")
-            return {"status": "error", "error": error_msg}
+            return {
+                "status": "error",
+                "error":
+                f"{error_msg}. Vérifiez que Ollama est installé et que le service est démarré."
+            }

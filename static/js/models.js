@@ -18,6 +18,12 @@ class ModelManager {
                 const modelName = document.getElementById('model-name')?.value?.trim();
                 if (modelName) {
                     this.pullModel(modelName);
+                } else {
+                    this.showError(
+                        "Veuillez entrer un nom de modèle valide",
+                        document.getElementById('models-list'),
+                        true
+                    );
                 }
             });
         }
@@ -36,7 +42,34 @@ class ModelManager {
 
         const alert = document.createElement('div');
         alert.className = `alert alert-${isTransient ? 'warning' : 'danger'} mb-3`;
-        alert.textContent = message || "Une erreur inattendue s'est produite";
+        
+        // Create installation instructions if needed
+        if (message.includes("n'est pas installé")) {
+            alert.innerHTML = `
+                <h5 class="alert-heading">Installation requise</h5>
+                <p>${message}</p>
+                <hr>
+                <p class="mb-0">
+                    Pour installer Ollama, suivez les instructions sur 
+                    <a href="https://ollama.ai/download" target="_blank" class="alert-link">
+                        le site officiel
+                    </a>.
+                </p>
+            `;
+        } else if (message.includes("n'est pas démarré")) {
+            alert.innerHTML = `
+                <h5 class="alert-heading">Service non démarré</h5>
+                <p>${message}</p>
+                <hr>
+                <p class="mb-0">
+                    Pour démarrer le service, exécutez la commande:
+                    <code>ollama serve</code>
+                </p>
+            `;
+        } else {
+            alert.textContent = message || "Une erreur inattendue s'est produite";
+        }
+        
         container.parentNode.insertBefore(alert, container);
         
         if (isTransient) {
@@ -44,23 +77,50 @@ class ModelManager {
         }
     }
 
-    getErrorMessage(error, defaultMessage = "Une erreur s'est produite") {
-        if (!error) return defaultMessage;
+    getErrorMessage(error) {
+        if (!error) return "Une erreur inattendue s'est produite";
         if (typeof error === 'string') return error;
         if (error.message) return error.message;
         if (typeof error === 'object') {
-            return Object.values(error).filter(v => v).join('. ') || defaultMessage;
+            const messages = Object.values(error).filter(v => v);
+            return messages.length ? messages.join('. ') : "Une erreur inattendue s'est produite";
         }
-        return defaultMessage;
+        return "Une erreur inattendue s'est produite";
     }
 
-    async retryOperation(operation, errorMessage, targetElement) {
+    formatErrorMessage(baseMessage, error, attempt = null) {
+        const errorMsg = this.getErrorMessage(error);
+        let message = `${baseMessage}: ${errorMsg}`;
+        
+        if (attempt !== null) {
+            message += ` (Tentative ${attempt})`;
+        }
+        
+        // Add help text based on error type
+        if (errorMsg.toLowerCase().includes('connexion')) {
+            message += "\nVérifiez que le service Ollama est démarré et accessible.";
+        } else if (errorMsg.toLowerCase().includes('installé')) {
+            message += "\nVisitez https://ollama.ai/download pour les instructions d'installation.";
+        }
+        
+        return message;
+    }
+
+    async retryOperation(operation, context) {
+        const {
+            baseErrorMessage,
+            targetElement,
+            maxRetries = this.maxRetries,
+            initialDelay = this.retryDelay
+        } = context;
+        
         let retryCount = 0;
-        const maxRetries = this.maxRetries;
-        let retryDelay = this.retryDelay;
+        let delay = initialDelay;
 
         while (retryCount < maxRetries) {
             try {
+                console.log(`Attempting operation (try ${retryCount + 1}/${maxRetries})`);
+                
                 const response = await operation();
                 if (!response) {
                     throw new Error("Aucune réponse reçue du serveur");
@@ -71,27 +131,39 @@ class ModelManager {
                     if (!data) {
                         throw new Error("Données de réponse vides");
                     }
+                    
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    
                     return data;
                 }
                 
                 if (response.status === 404) {
-                    throw new Error("Service non disponible. Veuillez vérifier la configuration du serveur.");
+                    throw new Error("Service Ollama non disponible. Vérifiez la configuration du serveur.");
                 }
                 
                 throw new Error(`Le serveur a répondu avec le statut: ${response.status}`);
             } catch (error) {
                 retryCount++;
-                console.error(`Tentative ${retryCount}/${maxRetries} échouée:`, error);
+                console.error(
+                    `Operation failed (attempt ${retryCount}/${maxRetries}):`,
+                    error
+                );
+                
+                const isLastAttempt = retryCount === maxRetries;
+                const message = this.formatErrorMessage(
+                    baseErrorMessage,
+                    error,
+                    isLastAttempt ? null : retryCount
+                );
+                
+                this.showError(message, targetElement, !isLastAttempt);
                 
                 if (retryCount < maxRetries) {
-                    const errorMsg = this.getErrorMessage(error);
-                    this.showError(
-                        `${errorMessage} - Tentative ${retryCount}/${maxRetries}... (${errorMsg})`, 
-                        targetElement, 
-                        true
-                    );
-                    await new Promise(resolve => setTimeout(resolve, retryDelay));
-                    retryDelay *= this.retryMultiplier; // Exponential backoff
+                    console.log(`Waiting ${delay}ms before retry...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= this.retryMultiplier; // Exponential backoff
                     continue;
                 }
                 throw error;
@@ -103,27 +175,16 @@ class ModelManager {
         try {
             const data = await this.retryOperation(
                 () => fetch('/api/models'),
-                "Tentative de reconnexion aux modèles",
-                document.getElementById('models-list')
+                {
+                    baseErrorMessage: "Impossible de récupérer la liste des modèles",
+                    targetElement: document.getElementById('models-list')
+                }
             );
             
-            if (!data) {
-                throw new Error("Aucune donnée reçue du serveur");
-            }
-
-            if (data.error) {
-                const errorMsg = this.getErrorMessage(data.error);
-                throw new Error(errorMsg);
-            }
             this.updateModelsList(data.models || []);
             this.retryCount = 0;
         } catch (error) {
             console.error('Failed to fetch models:', error);
-            const errorMsg = this.getErrorMessage(error);
-            this.showError(
-                `Impossible de récupérer les modèles: ${errorMsg}`,
-                document.getElementById('models-list')
-            );
             this.updateModelsList([]);
         }
     }
@@ -132,83 +193,71 @@ class ModelManager {
         try {
             const data = await this.retryOperation(
                 () => fetch('/api/models/running'),
-                "Tentative de reconnexion aux modèles en cours d'exécution",
-                document.getElementById('running-models-list')
+                {
+                    baseErrorMessage: "Impossible de récupérer les modèles en cours d'exécution",
+                    targetElement: document.getElementById('running-models-list')
+                }
             );
             
-            if (!data) {
-                throw new Error("Aucune donnée reçue du serveur");
-            }
-
-            if (data.error) {
-                const errorMsg = this.getErrorMessage(data.error);
-                throw new Error(errorMsg);
-            }
-
             this.updateRunningModelsList(data.models || []);
             this.retryCount = 0;
         } catch (error) {
             console.error('Failed to fetch running models:', error);
-            const errorMsg = this.getErrorMessage(error);
-            this.showError(
-                `Impossible de récupérer les modèles en cours d'exécution: ${errorMsg}`,
-                document.getElementById('running-models-list')
-            );
             this.updateRunningModelsList([]);
         }
     }
 
     async pullModel(modelName) {
-        if (!modelName) return;
+        if (!modelName) {
+            this.showError(
+                "Veuillez spécifier un nom de modèle",
+                document.getElementById('models-list'),
+                true
+            );
+            return;
+        }
         
         try {
             const data = await this.retryOperation(
                 () => fetch(`/api/models/pull/${modelName}`, { method: 'POST' }),
-                `Tentative de téléchargement du modèle ${modelName}`,
-                document.getElementById('models-list')
+                {
+                    baseErrorMessage: `Impossible de télécharger le modèle ${modelName}`,
+                    targetElement: document.getElementById('models-list')
+                }
             );
             
-            if (!data || data.error) {
-                const errorMsg = this.getErrorMessage(data?.error);
-                throw new Error(errorMsg);
-            }
             if (data.status === 'success') {
                 this.refreshModelsList();
             }
         } catch (error) {
             console.error('Failed to pull model:', error);
-            const errorMsg = this.getErrorMessage(error);
-            this.showError(
-                `Impossible de télécharger le modèle ${modelName}: ${errorMsg}`,
-                document.getElementById('models-list')
-            );
         }
     }
 
     async stopModel(modelName) {
-        if (!modelName) return;
+        if (!modelName) {
+            this.showError(
+                "Nom du modèle non spécifié",
+                document.getElementById('running-models-list'),
+                true
+            );
+            return;
+        }
         
         try {
             const data = await this.retryOperation(
                 () => fetch(`/api/models/stop/${modelName}`, { method: 'POST' }),
-                `Tentative d'arrêt du modèle ${modelName}`,
-                document.getElementById('running-models-list')
+                {
+                    baseErrorMessage: `Impossible d'arrêter le modèle ${modelName}`,
+                    targetElement: document.getElementById('running-models-list')
+                }
             );
             
-            if (!data || data.error) {
-                const errorMsg = this.getErrorMessage(data?.error);
-                throw new Error(errorMsg);
-            }
             if (data.status === 'success') {
                 this.refreshRunningModelsList();
             }
         } catch (error) {
             console.error('Failed to stop model:', error);
-            const errorMsg = this.getErrorMessage(error);
-            this.showError(
-                `Impossible d'arrêter le modèle ${modelName}: ${errorMsg}`,
-                document.getElementById('running-models-list')
-            );
         }
     }
 
@@ -220,24 +269,17 @@ class ModelManager {
         try {
             const data = await this.retryOperation(
                 () => fetch(`/api/models/delete/${modelName}`, { method: 'DELETE' }),
-                `Tentative de suppression du modèle ${modelName}`,
-                document.getElementById('models-list')
+                {
+                    baseErrorMessage: `Impossible de supprimer le modèle ${modelName}`,
+                    targetElement: document.getElementById('models-list')
+                }
             );
             
-            if (!data || data.error) {
-                const errorMsg = this.getErrorMessage(data?.error);
-                throw new Error(errorMsg);
-            }
             if (data.status === 'success') {
                 this.refreshModelsList();
             }
         } catch (error) {
             console.error('Failed to delete model:', error);
-            const errorMsg = this.getErrorMessage(error);
-            this.showError(
-                `Impossible de supprimer le modèle ${modelName}: ${errorMsg}`,
-                document.getElementById('models-list')
-            );
         }
     }
 
