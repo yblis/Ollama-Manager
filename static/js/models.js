@@ -23,8 +23,7 @@ class ModelManager {
                             message: "Veuillez entrer un nom de modèle valide",
                             code: "INVALID_INPUT"
                         },
-                        document.getElementById('models-list'),
-                        true
+                        document.getElementById('models-list')
                     );
                 }
             });
@@ -45,65 +44,46 @@ class ModelManager {
         const alert = document.createElement('div');
         alert.className = `alert alert-${isTransient ? 'warning' : 'danger'} mb-3`;
         
-        const errorMessage = this.formatErrorMessage(error);
-        
-        if (errorMessage.includes("n'est pas installé")) {
+        // Handle installation errors
+        if (error.code === "INSTALLATION_ERROR") {
             alert.innerHTML = `
-                <h5 class="alert-heading">Installation requise</h5>
-                <p>${errorMessage}</p>
+                <h5 class="alert-heading">Installation d'Ollama requise</h5>
+                <p>${error.message}</p>
                 <hr>
                 <p class="mb-0">
                     Pour installer Ollama, suivez les instructions sur 
                     <a href="https://ollama.ai/download" target="_blank" class="alert-link">
-                        le site officiel
-                    </a>.
+                        le site officiel d'Ollama
+                    </a>
                 </p>
             `;
-        } else if (errorMessage.includes("n'est pas démarré")) {
+        }
+        // Handle connection errors
+        else if (error.code === "CONNECTION_ERROR") {
             alert.innerHTML = `
-                <h5 class="alert-heading">Service non démarré</h5>
-                <p>${errorMessage}</p>
+                <h5 class="alert-heading">Service Ollama non démarré</h5>
+                <p>${error.message}</p>
                 <hr>
                 <p class="mb-0">
                     Pour démarrer le service, exécutez la commande:
                     <code>ollama serve</code>
                 </p>
             `;
-        } else {
-            if (error.code) {
-                alert.innerHTML = `
-                    <h5 class="alert-heading">${errorMessage}</h5>
-                    <p class="mb-0">
-                        <small class="text-muted">Code: ${error.code}</small>
-                        ${error.details ? `<br><small class="text-muted">Détails: ${error.details}</small>` : ''}
-                    </p>
-                `;
-            } else {
-                alert.textContent = errorMessage;
-            }
+        }
+        // Handle other errors
+        else {
+            alert.innerHTML = `
+                <h5 class="alert-heading">${error.message || "Une erreur s'est produite"}</h5>
+                ${error.details ? `<p>${error.details}</p>` : ''}
+                ${error.code ? `<small class="text-muted">Code d'erreur: ${error.code}</small>` : ''}
+            `;
         }
         
         container.parentNode.insertBefore(alert, container);
         
-        if (isTransient) {
+        if (isTransient && !["INSTALLATION_ERROR", "CONNECTION_ERROR"].includes(error.code)) {
             setTimeout(() => alert?.remove(), 5000);
         }
-    }
-
-    formatErrorMessage(error) {
-        if (!error) return "Une erreur inattendue s'est produite";
-        if (typeof error === 'string') return error;
-        
-        if (typeof error === 'object') {
-            if (error.error && typeof error.error === 'object') {
-                return error.error.message || "Une erreur inattendue s'est produite";
-            }
-            if (error.message) return error.message;
-            
-            const messages = Object.values(error).filter(v => v);
-            return messages.length ? messages.join('. ') : "Une erreur inattendue s'est produite";
-        }
-        return "Une erreur inattendue s'est produite";
     }
 
     async retryOperation(operation, context) {
@@ -122,41 +102,40 @@ class ModelManager {
                 console.log(`Attempting operation (try ${retryCount + 1}/${maxRetries})`);
                 
                 const response = await operation();
-                if (!response) {
+                if (!response || !response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
                     throw {
-                        message: "Aucune réponse reçue du serveur",
-                        code: "NO_RESPONSE"
+                        message: errorData.error?.message || "Erreur de communication avec le serveur",
+                        code: errorData.error?.code || "SERVER_ERROR",
+                        details: errorData.error?.details
                     };
                 }
                 
                 const data = await response.json();
-                if (!data) {
-                    throw {
-                        message: "Données de réponse vides",
-                        code: "EMPTY_RESPONSE"
-                    };
-                }
-                
                 if (data.error) {
                     throw data.error;
                 }
                 
                 return data;
             } catch (error) {
+                console.error(`Operation failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
+                
+                // Don't retry for installation or connection errors
+                if (["INSTALLATION_ERROR", "CONNECTION_ERROR"].includes(error.code)) {
+                    this.showError(error, targetElement);
+                    throw error;
+                }
+                
                 retryCount++;
-                console.error(
-                    `Operation failed (attempt ${retryCount}/${maxRetries}):`,
-                    error
-                );
-                
                 const isLastAttempt = retryCount === maxRetries;
-                const errorObj = {
-                    message: baseErrorMessage,
-                    code: error.code || "OPERATION_FAILED",
-                    details: error.message || error.details || `Tentative ${retryCount}/${maxRetries}`
-                };
                 
-                this.showError(errorObj, targetElement, !isLastAttempt);
+                this.showError({
+                    message: error.message || baseErrorMessage,
+                    code: error.code,
+                    details: !isLastAttempt ? 
+                        `Tentative ${retryCount}/${maxRetries}. Nouvelle tentative dans ${delay/1000}s...` :
+                        error.details
+                }, targetElement, !isLastAttempt);
                 
                 if (retryCount < maxRetries) {
                     console.log(`Waiting ${delay}ms before retry...`);
@@ -180,10 +159,12 @@ class ModelManager {
             );
             
             this.updateModelsList(data.models || []);
-            this.retryCount = 0;
         } catch (error) {
             console.error('Failed to fetch models:', error);
-            this.updateModelsList([]);
+            // Don't clear the list for installation errors
+            if (!["INSTALLATION_ERROR", "CONNECTION_ERROR"].includes(error.code)) {
+                this.updateModelsList([]);
+            }
         }
     }
 
@@ -198,92 +179,12 @@ class ModelManager {
             );
             
             this.updateRunningModelsList(data.models || []);
-            this.retryCount = 0;
         } catch (error) {
             console.error('Failed to fetch running models:', error);
-            this.updateRunningModelsList([]);
-        }
-    }
-
-    async pullModel(modelName) {
-        if (!modelName) {
-            this.showError(
-                {
-                    message: "Veuillez spécifier un nom de modèle",
-                    code: "INVALID_INPUT"
-                },
-                document.getElementById('models-list'),
-                true
-            );
-            return;
-        }
-        
-        try {
-            const data = await this.retryOperation(
-                () => fetch(`/api/models/pull/${modelName}`, { method: 'POST' }),
-                {
-                    baseErrorMessage: `Impossible de télécharger le modèle ${modelName}`,
-                    targetElement: document.getElementById('models-list')
-                }
-            );
-            
-            if (data.status === 'success') {
-                this.refreshModelsList();
+            // Don't clear the list for installation errors
+            if (!["INSTALLATION_ERROR", "CONNECTION_ERROR"].includes(error.code)) {
+                this.updateRunningModelsList([]);
             }
-        } catch (error) {
-            console.error('Failed to pull model:', error);
-        }
-    }
-
-    async stopModel(modelName) {
-        if (!modelName) {
-            this.showError(
-                {
-                    message: "Nom du modèle non spécifié",
-                    code: "INVALID_INPUT"
-                },
-                document.getElementById('running-models-list'),
-                true
-            );
-            return;
-        }
-        
-        try {
-            const data = await this.retryOperation(
-                () => fetch(`/api/models/stop/${modelName}`, { method: 'POST' }),
-                {
-                    baseErrorMessage: `Impossible d'arrêter le modèle ${modelName}`,
-                    targetElement: document.getElementById('running-models-list')
-                }
-            );
-            
-            if (data.status === 'success') {
-                this.refreshRunningModelsList();
-            }
-        } catch (error) {
-            console.error('Failed to stop model:', error);
-        }
-    }
-
-    async deleteModel(modelName) {
-        if (!modelName || !confirm(`Êtes-vous sûr de vouloir supprimer ${modelName}?`)) {
-            return;
-        }
-
-        try {
-            const data = await this.retryOperation(
-                () => fetch(`/api/models/delete/${modelName}`, { method: 'DELETE' }),
-                {
-                    baseErrorMessage: `Impossible de supprimer le modèle ${modelName}`,
-                    targetElement: document.getElementById('models-list')
-                }
-            );
-            
-            if (data.status === 'success') {
-                this.refreshModelsList();
-            }
-        } catch (error) {
-            console.error('Failed to delete model:', error);
         }
     }
 
