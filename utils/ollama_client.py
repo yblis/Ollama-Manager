@@ -1,5 +1,5 @@
 import requests
-from requests.exceptions import RequestException
+from requests.exceptions import RequestException, ConnectionError
 import time
 
 
@@ -22,42 +22,86 @@ class OllamaClient:
                 )
                 response.raise_for_status()
                 return response.json()
+            except ConnectionError:
+                error_msg = "Failed to connect to Ollama server - Please make sure Ollama is running"
+                if attempt < self.max_retries - 1:
+                    time.sleep(self.retry_delay)
+                    continue
+                return {"error": error_msg}
             except RequestException as e:
-                if attempt == self.max_retries - 1:
-                    error_msg = "Failed to connect to Ollama server"
-                    if hasattr(e.response, 'text'):
-                        error_msg += f": {e.response.text}"
-                    elif str(e):
-                        error_msg += f": {str(e)}"
-                    raise Exception(error_msg)
-                time.sleep(self.retry_delay)
+                error_msg = "Failed to connect to Ollama server"
+                if hasattr(e, 'response') and e.response is not None:
+                    error_msg += f": {e.response.text}"
+                elif str(e):
+                    error_msg += f": {str(e)}"
+                if attempt < self.max_retries - 1:
+                    time.sleep(self.retry_delay)
+                    continue
+                return {"error": error_msg}
 
     def list_models(self):
         """List all available models"""
         try:
             response = self._make_request("GET", "/api/tags")
+            if "error" in response:
+                return {"models": [], "error": response["error"]}
             return response
         except Exception as e:
-            raise Exception(f"Failed to list models: {str(e)}")
+            return {"models": [], "error": f"Failed to list models: {str(e)}"}
+
+    def list_running_models(self):
+        """List all currently running model instances"""
+        try:
+            response = self._make_request("GET", "/api/show")
+            if "error" in response:
+                return {"models": [], "error": response["error"]}
+            
+            models = []
+            if response and isinstance(response, dict):
+                for model_name, status in response.items():
+                    models.append({
+                        "name": model_name,
+                        "status": "running" if status.get("status") == "ready" else status.get("status", "unknown")
+                    })
+            return {"models": models}
+        except Exception as e:
+            return {"models": [], "error": f"Failed to list running models: {str(e)}"}
+
+    def stop_model(self, model_name):
+        """Stop a running model instance"""
+        try:
+            response = self._make_request("POST", "/api/stop", json={"name": model_name})
+            if "error" in response:
+                return {"status": "error", "error": response["error"]}
+            return {
+                "status": "success",
+                "message": f"Model {model_name} stopped successfully"
+            }
+        except Exception as e:
+            return {"status": "error", "error": f"Failed to stop model {model_name}: {str(e)}"}
 
     def pull_model(self, model_name):
         """Pull a new model"""
         try:
-            self._make_request("POST", "/api/pull", json={"name": model_name})
+            response = self._make_request("POST", "/api/pull", json={"name": model_name})
+            if "error" in response:
+                return {"status": "error", "error": response["error"]}
             return {
                 "status": "success",
                 "message": f"Model {model_name} pulled successfully"
             }
         except Exception as e:
-            raise Exception(f"Failed to pull model {model_name}: {str(e)}")
+            return {"status": "error", "error": f"Failed to pull model {model_name}: {str(e)}"}
 
     def delete_model(self, model_name):
         """Delete an existing model"""
         try:
-            self._make_request("DELETE", "/api/delete", json={"name": model_name})
+            response = self._make_request("DELETE", "/api/delete", json={"name": model_name})
+            if "error" in response:
+                return {"status": "error", "error": response["error"]}
             return {
                 "status": "success",
                 "message": f"Model {model_name} deleted successfully"
             }
         except Exception as e:
-            raise Exception(f"Failed to delete model {model_name}: {str(e)}")
+            return {"status": "error", "error": f"Failed to delete model {model_name}: {str(e)}"}

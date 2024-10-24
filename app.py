@@ -15,26 +15,52 @@ def index():
 @app.route('/api/models')
 def get_models():
     try:
-        models = ollama_client.list_models()
-        return jsonify(models)
+        result = ollama_client.list_models()
+        if "error" in result:
+            return jsonify({"models": [], "error": result["error"]})
+        return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"models": [], "error": str(e)})
+
+@app.route('/api/models/running')
+def get_running_models():
+    try:
+        result = ollama_client.list_running_models()
+        if "error" in result:
+            return jsonify({"models": [], "error": result["error"]})
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"models": [], "error": str(e)})
+
+@app.route('/api/models/stop/<model_name>', methods=['POST'])
+def stop_model(model_name):
+    try:
+        result = ollama_client.stop_model(model_name)
+        if "error" in result:
+            return jsonify({"status": "error", "error": result["error"]})
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)})
 
 @app.route('/api/models/pull/<model_name>', methods=['POST'])
 def pull_model(model_name):
     try:
         result = ollama_client.pull_model(model_name)
+        if "error" in result:
+            return jsonify({"status": "error", "error": result["error"]})
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"status": "error", "error": str(e)})
 
 @app.route('/api/models/delete/<model_name>', methods=['DELETE'])
 def delete_model(model_name):
     try:
         result = ollama_client.delete_model(model_name)
+        if "error" in result:
+            return jsonify({"status": "error", "error": result["error"]})
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"status": "error", "error": str(e)})
 
 @app.route('/api/gpu/stats')
 def gpu_stats_stream():
