@@ -8,12 +8,12 @@ class GPUMonitor:
         # Check if nvidia-smi is available
         if not shutil.which('nvidia-smi'):
             return {
-                "error": "NVIDIA GPU monitoring not available - nvidia-smi not found",
-                "status": "unavailable",
+                "status": "no_gpu",
                 "gpu_utilization": 0,
                 "memory_used": 0,
                 "memory_total": 0,
-                "temperature": 0
+                "temperature": 0,
+                "message": "No NVIDIA GPU detected"
             }
 
         try:
@@ -26,12 +26,12 @@ class GPUMonitor:
             
             if result.returncode != 0:
                 return {
-                    "error": "Failed to get GPU stats - nvidia-smi command failed",
                     "status": "error",
                     "gpu_utilization": 0,
                     "memory_used": 0,
                     "memory_total": 0,
-                    "temperature": 0
+                    "temperature": 0,
+                    "message": "Failed to get GPU stats"
                 }
 
             stats = result.stdout.strip().split(',')
@@ -44,19 +44,19 @@ class GPUMonitor:
             }
         except subprocess.TimeoutExpired:
             return {
-                "error": "GPU stats collection timed out",
                 "status": "timeout",
                 "gpu_utilization": 0,
                 "memory_used": 0,
                 "memory_total": 0,
-                "temperature": 0
+                "temperature": 0,
+                "message": "GPU stats collection timed out"
             }
         except Exception as e:
             return {
-                "error": str(e),
                 "status": "error",
                 "gpu_utilization": 0,
                 "memory_used": 0,
                 "memory_total": 0,
-                "temperature": 0
+                "temperature": 0,
+                "message": str(e)
             }

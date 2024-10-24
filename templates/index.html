@@ -1,38 +1,71 @@
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="dark">
+<html lang="fr" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ollama Dashboard</title>
+    <title>Tableau de Bord Ollama</title>
     <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
     <link href="/static/css/custom.css" rel="stylesheet">
 </head>
 <body>
-    <div class="container py-4">
-        <h1 class="mb-4">Ollama Model Dashboard</h1>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="#">Tableau de Bord des Modèles Ollama</a>
+            <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#settingsModal">
+                <i class="bi bi-gear"></i> Paramètres
+            </button>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- Settings Modal -->
+        <div class="modal fade" id="settingsModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Paramètres</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="serverUrl" class="form-label">URL du Serveur Ollama</label>
+                            <input type="url" class="form-control" id="serverUrl" placeholder="http://localhost:11434">
+                        </div>
+                        <div id="connectionStatus" class="alert alert-info">
+                            Vérification de la connexion...
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                        <button type="button" class="btn btn-primary" id="saveSettings">Enregistrer</button>
+                    </div>
+                </div>
+            </div>
+        </div>
         
         <!-- GPU Stats Card -->
         <div class="card mb-4">
             <div class="card-header">
-                <h5 class="card-title mb-0">GPU Statistics</h5>
+                <h5 class="card-title mb-0">Statistiques GPU</h5>
             </div>
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-3">
                         <div class="gpu-stat">
-                            <h6>GPU Utilization</h6>
+                            <h6>Utilisation GPU</h6>
                             <p id="gpu-utilization">--%</p>
                         </div>
                     </div>
                     <div class="col-md-3">
                         <div class="gpu-stat">
-                            <h6>Memory Usage</h6>
+                            <h6>Utilisation Mémoire</h6>
                             <p id="memory-usage">-- / -- MB</p>
                         </div>
                     </div>
                     <div class="col-md-3">
                         <div class="gpu-stat">
-                            <h6>Temperature</h6>
+                            <h6>Température</h6>
                             <p id="gpu-temp">--°C</p>
                         </div>
                     </div>
@@ -43,15 +76,15 @@
         <!-- Running Models -->
         <div class="card mb-4">
             <div class="card-header">
-                <h5 class="card-title mb-0">Running Models</h5>
+                <h5 class="card-title mb-0">Modèles en Cours d'Exécution</h5>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
                     <table class="table">
                         <thead>
                             <tr>
-                                <th>Model Name</th>
-                                <th>Status</th>
+                                <th>Nom du Modèle</th>
+                                <th>État</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -62,13 +95,40 @@
             </div>
         </div>
 
+        <!-- Model Performance -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Performance des Modèles</h5>
+            </div>
+            <div class="card-body">
+                <div id="benchmark-results">
+                    <div class="table-responsive">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Nom du Modèle</th>
+                                    <th>Temps de Réponse</th>
+                                    <th>Utilisation CPU (Moy)</th>
+                                    <th>Utilisation Mémoire (Moy)</th>
+                                    <th>État</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="benchmark-results-list">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Installed Models -->
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="card-title mb-0">Installed Models</h5>
+                <h5 class="card-title mb-0">Modèles Installés</h5>
                 <div class="input-group w-50">
-                    <input type="text" class="form-control" id="model-name" placeholder="Enter model name">
-                    <button class="btn btn-secondary" id="pull-model">Pull Model</button>
+                    <input type="text" class="form-control" id="model-name" placeholder="Entrez le nom du modèle">
+                    <button class="btn btn-secondary" id="pull-model">Télécharger le Modèle</button>
                 </div>
             </div>
             <div class="card-body">
@@ -76,8 +136,8 @@
                     <table class="table">
                         <thead>
                             <tr>
-                                <th>Model Name</th>
-                                <th>Size</th>
+                                <th>Nom du Modèle</th>
+                                <th>Taille</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -89,8 +149,11 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/settings.js"></script>
     <script src="/static/js/gpu_monitor.js"></script>
     <script src="/static/js/models.js"></script>
+    <script src="/static/js/benchmark.js"></script>
     <script src="/static/js/dashboard.js"></script>
 </body>
 </html>

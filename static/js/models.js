@@ -152,9 +152,14 @@ class ModelManager {
                 <td>${model.name}</td>
                 <td>${this.formatSize(model.size)}</td>
                 <td>
-                    <button class="btn btn-sm btn-danger" onclick="modelManager.deleteModel('${model.name}')">
-                        Delete
-                    </button>
+                    <div class="btn-group">
+                        <button class="btn btn-sm btn-secondary" onclick="benchmarkManager.startBenchmark('${model.name}')">
+                            Benchmark
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="modelManager.deleteModel('${model.name}')">
+                            Delete
+                        </button>
+                    </div>
                 </td>
             `;
             tbody.appendChild(row);
@@ -178,9 +183,14 @@ class ModelManager {
                 <td>${model.name}</td>
                 <td><span class="badge bg-success">${model.status}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-warning" onclick="modelManager.stopModel('${model.name}')">
-                        Stop
-                    </button>
+                    <div class="btn-group">
+                        <button class="btn btn-sm btn-secondary" onclick="benchmarkManager.startBenchmark('${model.name}')">
+                            Benchmark
+                        </button>
+                        <button class="btn btn-sm btn-warning" onclick="modelManager.stopModel('${model.name}')">
+                            Stop
+                        </button>
+                    </div>
                 </td>
             `;
             tbody.appendChild(row);

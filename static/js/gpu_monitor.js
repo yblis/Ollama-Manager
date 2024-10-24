@@ -46,24 +46,27 @@ class GPUMonitor {
         }
 
         const alert = document.createElement('div');
-        alert.className = 'alert alert-danger mx-3 mb-3';
+        alert.className = 'alert alert-warning mx-3 mb-3';
         alert.textContent = message;
         gpuCard.querySelector('.card-body').insertBefore(alert, gpuCard.querySelector('.row'));
     }
 
     updateStats(stats) {
-        if (stats.error) {
-            console.error('GPU Stats Error:', stats.error);
-            this.showError(`Failed to get GPU stats: ${stats.error}`);
-            // Show dashes to indicate no data
-            this.showNoData();
-            return;
-        }
-
-        // Clear any error messages if stats are successful
+        // Clear any previous error messages
         const existingAlert = document.querySelector('.gpu-stat').closest('.card').querySelector('.alert');
         if (existingAlert) {
             existingAlert.remove();
+        }
+
+        if (stats.status === 'no_gpu') {
+            this.showNoGPU(stats.message);
+            return;
+        }
+
+        if (stats.status === 'error' || stats.status === 'timeout') {
+            this.showError(stats.message);
+            this.showNoData();
+            return;
         }
 
         document.getElementById('gpu-utilization').textContent = 
@@ -72,6 +75,15 @@ class GPUMonitor {
             `${stats.memory_used.toFixed(0)} / ${stats.memory_total.toFixed(0)} MB`;
         document.getElementById('gpu-temp').textContent = 
             `${stats.temperature.toFixed(1)}°C`;
+    }
+
+    showNoGPU(message) {
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-info mx-3 mb-3';
+        alert.textContent = message;
+        const gpuCard = document.querySelector('.gpu-stat').closest('.card');
+        gpuCard.querySelector('.card-body').insertBefore(alert, gpuCard.querySelector('.row'));
+        this.showNoData();
     }
 
     showNoData() {
