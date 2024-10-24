@@ -42,47 +42,69 @@ class ModelManager {
         }
 
         const alert = document.createElement('div');
-        alert.className = `alert alert-${isTransient ? 'warning' : 'danger'} mb-3`;
+        const errorType = this.getErrorType(error);
         
-        // Handle installation errors
-        if (error.code === "INSTALLATION_ERROR") {
-            alert.innerHTML = `
-                <h5 class="alert-heading">Installation d'Ollama requise</h5>
-                <p>${error.message}</p>
-                <hr>
-                <p class="mb-0">
-                    Pour installer Ollama, suivez les instructions sur 
-                    <a href="https://ollama.ai/download" target="_blank" class="alert-link">
-                        le site officiel d'Ollama
-                    </a>
-                </p>
-            `;
-        }
-        // Handle connection errors
-        else if (error.code === "CONNECTION_ERROR") {
-            alert.innerHTML = `
-                <h5 class="alert-heading">Service Ollama non démarré</h5>
-                <p>${error.message}</p>
-                <hr>
-                <p class="mb-0">
-                    Pour démarrer le service, exécutez la commande:
-                    <code>ollama serve</code>
-                </p>
-            `;
-        }
-        // Handle other errors
-        else {
-            alert.innerHTML = `
-                <h5 class="alert-heading">${error.message || "Une erreur s'est produite"}</h5>
-                ${error.details ? `<p>${error.details}</p>` : ''}
-                ${error.code ? `<small class="text-muted">Code d'erreur: ${error.code}</small>` : ''}
-            `;
-        }
+        alert.className = `alert ${errorType.alertClass} mb-3`;
+        alert.innerHTML = `
+            <h5 class="alert-heading">${errorType.title}</h5>
+            <p>${error.message}</p>
+            ${errorType.extraContent || ''}
+            ${error.details ? `<hr><small class="text-muted">${error.details}</small>` : ''}
+        `;
         
         container.parentNode.insertBefore(alert, container);
         
-        if (isTransient && !["INSTALLATION_ERROR", "CONNECTION_ERROR"].includes(error.code)) {
+        if (isTransient && !errorType.persistent) {
             setTimeout(() => alert?.remove(), 5000);
+        }
+    }
+
+    getErrorType(error) {
+        switch(error.code) {
+            case "INSTALLATION_ERROR":
+                return {
+                    alertClass: 'alert-danger',
+                    title: "Installation d'Ollama requise",
+                    extraContent: `
+                        <hr>
+                        <p class="mb-0">
+                            Pour installer Ollama, suivez les instructions sur 
+                            <a href="https://ollama.ai/download" target="_blank" class="alert-link">
+                                le site officiel d'Ollama
+                            </a>
+                        </p>
+                    `,
+                    persistent: true
+                };
+            
+            case "SERVICE_NOT_RUNNING":
+            case "CONNECTION_ERROR":
+                return {
+                    alertClass: 'alert-warning',
+                    title: "Service Ollama non démarré",
+                    extraContent: `
+                        <hr>
+                        <p class="mb-0">
+                            Pour démarrer le service, exécutez la commande:
+                            <code>ollama serve</code>
+                        </p>
+                    `,
+                    persistent: true
+                };
+            
+            case "TIMEOUT_ERROR":
+                return {
+                    alertClass: 'alert-warning',
+                    title: "Délai d'attente dépassé",
+                    persistent: false
+                };
+            
+            default:
+                return {
+                    alertClass: 'alert-danger',
+                    title: error.message || "Une erreur s'est produite",
+                    persistent: false
+                };
         }
     }
 
@@ -102,7 +124,8 @@ class ModelManager {
                 console.log(`Attempting operation (try ${retryCount + 1}/${maxRetries})`);
                 
                 const response = await operation();
-                if (!response || !response.ok) {
+                
+                if (!response.ok) {
                     const errorData = await response.json().catch(() => ({}));
                     throw {
                         message: errorData.error?.message || "Erreur de communication avec le serveur",
@@ -113,6 +136,11 @@ class ModelManager {
                 
                 const data = await response.json();
                 if (data.error) {
+                    // Don't retry for certain errors
+                    if (["INSTALLATION_ERROR", "SERVICE_NOT_RUNNING"].includes(data.error.code)) {
+                        this.showError(data.error, targetElement);
+                        throw data.error;
+                    }
                     throw data.error;
                 }
                 
@@ -120,8 +148,8 @@ class ModelManager {
             } catch (error) {
                 console.error(`Operation failed (attempt ${retryCount + 1}/${maxRetries}):`, error);
                 
-                // Don't retry for installation or connection errors
-                if (["INSTALLATION_ERROR", "CONNECTION_ERROR"].includes(error.code)) {
+                // Don't retry for certain errors
+                if (["INSTALLATION_ERROR", "SERVICE_NOT_RUNNING"].includes(error.code)) {
                     this.showError(error, targetElement);
                     throw error;
                 }
@@ -129,16 +157,17 @@ class ModelManager {
                 retryCount++;
                 const isLastAttempt = retryCount === maxRetries;
                 
-                this.showError({
+                const retryError = {
+                    ...error,
                     message: error.message || baseErrorMessage,
-                    code: error.code,
                     details: !isLastAttempt ? 
                         `Tentative ${retryCount}/${maxRetries}. Nouvelle tentative dans ${delay/1000}s...` :
                         error.details
-                }, targetElement, !isLastAttempt);
+                };
+                
+                this.showError(retryError, targetElement, !isLastAttempt);
                 
                 if (retryCount < maxRetries) {
-                    console.log(`Waiting ${delay}ms before retry...`);
                     await new Promise(resolve => setTimeout(resolve, delay));
                     delay *= this.retryMultiplier;
                     continue;
@@ -161,8 +190,8 @@ class ModelManager {
             this.updateModelsList(data.models || []);
         } catch (error) {
             console.error('Failed to fetch models:', error);
-            // Don't clear the list for installation errors
-            if (!["INSTALLATION_ERROR", "CONNECTION_ERROR"].includes(error.code)) {
+            // Don't clear the list for certain errors
+            if (!["INSTALLATION_ERROR", "SERVICE_NOT_RUNNING"].includes(error.code)) {
                 this.updateModelsList([]);
             }
         }
@@ -181,8 +210,8 @@ class ModelManager {
             this.updateRunningModelsList(data.models || []);
         } catch (error) {
             console.error('Failed to fetch running models:', error);
-            // Don't clear the list for installation errors
-            if (!["INSTALLATION_ERROR", "CONNECTION_ERROR"].includes(error.code)) {
+            // Don't clear the list for certain errors
+            if (!["INSTALLATION_ERROR", "SERVICE_NOT_RUNNING"].includes(error.code)) {
                 this.updateRunningModelsList([]);
             }
         }
