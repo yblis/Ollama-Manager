@@ -6,6 +6,7 @@ class ModelManager {
         this.retryCount = 0;
         this.maxRetries = 3;
         this.retryDelay = 2000; // 2 seconds
+        this.retryMultiplier = 1.5; // Exponential backoff multiplier
         // Refresh running models list every 5 seconds
         this.refreshInterval = setInterval(() => this.refreshRunningModelsList(), 5000);
     }
@@ -35,7 +36,7 @@ class ModelManager {
 
         const alert = document.createElement('div');
         alert.className = `alert alert-${isTransient ? 'warning' : 'danger'} mb-3`;
-        alert.textContent = message;
+        alert.textContent = message || "Une erreur inattendue s'est produite";
         container.parentNode.insertBefore(alert, container);
         
         if (isTransient) {
@@ -43,22 +44,32 @@ class ModelManager {
         }
     }
 
+    getErrorMessage(error, defaultMessage = "Une erreur s'est produite") {
+        if (!error) return defaultMessage;
+        if (typeof error === 'string') return error;
+        if (error.message) return error.message;
+        if (typeof error === 'object') {
+            return Object.values(error).filter(v => v).join('. ') || defaultMessage;
+        }
+        return defaultMessage;
+    }
+
     async retryOperation(operation, errorMessage, targetElement) {
         let retryCount = 0;
         const maxRetries = this.maxRetries;
-        const retryDelay = this.retryDelay;
+        let retryDelay = this.retryDelay;
 
         while (retryCount < maxRetries) {
             try {
                 const response = await operation();
                 if (!response) {
-                    throw new Error("No response received");
+                    throw new Error("Aucune réponse reçue du serveur");
                 }
                 
                 if (response.ok) {
                     const data = await response.json();
                     if (!data) {
-                        throw new Error("Empty response data");
+                        throw new Error("Données de réponse vides");
                     }
                     return data;
                 }
@@ -73,12 +84,14 @@ class ModelManager {
                 console.error(`Tentative ${retryCount}/${maxRetries} échouée:`, error);
                 
                 if (retryCount < maxRetries) {
+                    const errorMsg = this.getErrorMessage(error);
                     this.showError(
-                        `${errorMessage} - Tentative ${retryCount}/${maxRetries}...`, 
+                        `${errorMessage} - Tentative ${retryCount}/${maxRetries}... (${errorMsg})`, 
                         targetElement, 
                         true
                     );
                     await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    retryDelay *= this.retryMultiplier; // Exponential backoff
                     continue;
                 }
                 throw error;
@@ -94,14 +107,21 @@ class ModelManager {
                 document.getElementById('models-list')
             );
             
-            if (!data || data.error) {
-                throw new Error(data?.error || "Erreur inconnue");
+            if (!data) {
+                throw new Error("Aucune donnée reçue du serveur");
+            }
+
+            if (data.error) {
+                const errorMsg = this.getErrorMessage(data.error);
+                throw new Error(errorMsg);
             }
             this.updateModelsList(data.models || []);
+            this.retryCount = 0;
         } catch (error) {
             console.error('Failed to fetch models:', error);
+            const errorMsg = this.getErrorMessage(error);
             this.showError(
-                `Impossible de récupérer les modèles: ${error.message}`,
+                `Impossible de récupérer les modèles: ${errorMsg}`,
                 document.getElementById('models-list')
             );
             this.updateModelsList([]);
@@ -116,14 +136,22 @@ class ModelManager {
                 document.getElementById('running-models-list')
             );
             
-            if (!data || data.error) {
-                throw new Error(data?.error || "Erreur inconnue");
+            if (!data) {
+                throw new Error("Aucune donnée reçue du serveur");
             }
+
+            if (data.error) {
+                const errorMsg = this.getErrorMessage(data.error);
+                throw new Error(errorMsg);
+            }
+
             this.updateRunningModelsList(data.models || []);
+            this.retryCount = 0;
         } catch (error) {
             console.error('Failed to fetch running models:', error);
+            const errorMsg = this.getErrorMessage(error);
             this.showError(
-                `Impossible de récupérer les modèles en cours d'exécution: ${error.message}`,
+                `Impossible de récupérer les modèles en cours d'exécution: ${errorMsg}`,
                 document.getElementById('running-models-list')
             );
             this.updateRunningModelsList([]);
@@ -141,15 +169,17 @@ class ModelManager {
             );
             
             if (!data || data.error) {
-                throw new Error(data?.error || "Erreur inconnue");
+                const errorMsg = this.getErrorMessage(data?.error);
+                throw new Error(errorMsg);
             }
             if (data.status === 'success') {
                 this.refreshModelsList();
             }
         } catch (error) {
             console.error('Failed to pull model:', error);
+            const errorMsg = this.getErrorMessage(error);
             this.showError(
-                `Impossible de télécharger le modèle ${modelName}: ${error.message}`,
+                `Impossible de télécharger le modèle ${modelName}: ${errorMsg}`,
                 document.getElementById('models-list')
             );
         }
@@ -166,15 +196,17 @@ class ModelManager {
             );
             
             if (!data || data.error) {
-                throw new Error(data?.error || "Erreur inconnue");
+                const errorMsg = this.getErrorMessage(data?.error);
+                throw new Error(errorMsg);
             }
             if (data.status === 'success') {
                 this.refreshRunningModelsList();
             }
         } catch (error) {
             console.error('Failed to stop model:', error);
+            const errorMsg = this.getErrorMessage(error);
             this.showError(
-                `Impossible d'arrêter le modèle ${modelName}: ${error.message}`,
+                `Impossible d'arrêter le modèle ${modelName}: ${errorMsg}`,
                 document.getElementById('running-models-list')
             );
         }
@@ -193,15 +225,17 @@ class ModelManager {
             );
             
             if (!data || data.error) {
-                throw new Error(data?.error || "Erreur inconnue");
+                const errorMsg = this.getErrorMessage(data?.error);
+                throw new Error(errorMsg);
             }
             if (data.status === 'success') {
                 this.refreshModelsList();
             }
         } catch (error) {
             console.error('Failed to delete model:', error);
+            const errorMsg = this.getErrorMessage(error);
             this.showError(
-                `Impossible de supprimer le modèle ${modelName}: ${error.message}`,
+                `Impossible de supprimer le modèle ${modelName}: ${errorMsg}`,
                 document.getElementById('models-list')
             );
         }

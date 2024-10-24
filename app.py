@@ -5,6 +5,7 @@ from utils.gpu_monitor import GPUMonitor
 from utils.ollama_client import OllamaClient
 from utils.benchmark import ModelBenchmark
 import time
+import traceback
 
 # Configure logging
 logging.basicConfig(
@@ -76,20 +77,40 @@ def get_models():
 @app.route('/api/models/running')
 def get_running_models():
     try:
+        logger.info("Fetching running models...")
         result = ollama_client.list_running_models()
-        logger.info(f"Listed running models: {len(result.get('models', []))} found")
-        if "error" in result:
-            logger.error(f"Error listing running models: {result['error']}")
+        
+        # Log the complete response for debugging
+        logger.debug(f"Running models response: {result}")
+        
+        if not isinstance(result, dict):
+            logger.error(f"Invalid response format: {result}")
             return jsonify({
                 "models": [],
-                "error": result["error"]
+                "error": "Format de réponse invalide du service Ollama"
             })
-        return jsonify(result)
+
+        models = result.get('models', [])
+        error = result.get('error')
+        
+        if error:
+            logger.error(f"Error listing running models: {error}")
+            return jsonify({
+                "models": [],
+                "error": error if isinstance(error, str) else "Erreur lors de la récupération des modèles"
+            })
+
+        logger.info(f"Successfully retrieved {len(models)} running models")
+        return jsonify({
+            "models": models
+        })
+
     except Exception as e:
-        logger.error(f"Failed to get running models: {str(e)}")
+        logger.error(f"Unexpected error in get_running_models: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({
             "models": [],
-            "error": f"Failed to fetch running models: {str(e)}"
+            "error": f"Une erreur inattendue s'est produite lors de la récupération des modèles: {str(e)}"
         })
 
 @app.route('/api/models/stop/<model_name>', methods=['POST'])
