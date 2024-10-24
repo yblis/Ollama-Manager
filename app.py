@@ -24,6 +24,88 @@ model_benchmark = ModelBenchmark(ollama_client)
 def index():
     return render_template('index.html')
 
+@app.route('/api/settings/server', methods=['POST'])
+def update_server_settings():
+    try:
+        data = request.get_json()
+        url = data.get('url')
+        if not url:
+            return jsonify({
+                "error": {
+                    "message": "URL manquante",
+                    "code": "MISSING_URL"
+                }
+            }), 400
+
+        # Validate URL format
+        try:
+            parsed = urlparse(url)
+            if not all([parsed.scheme, parsed.netloc]):
+                return jsonify({
+                    "error": {
+                        "message": "Format d'URL invalide",
+                        "code": "INVALID_URL",
+                        "details": "L'URL doit être au format http(s)://host:port"
+                    }
+                }), 400
+        except Exception as e:
+            return jsonify({
+                "error": {
+                    "message": "Format d'URL invalide",
+                    "code": "INVALID_URL",
+                    "details": str(e)
+                }
+            }), 400
+            
+        # Update the client's base URL
+        ollama_client.base_url = url
+        status = ollama_client.check_connection()
+        
+        return jsonify(status)
+        
+    except Exception as e:
+        logger.error(f"Failed to update server settings: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            "error": {
+                "message": "Erreur lors de la mise à jour des paramètres",
+                "code": "UPDATE_ERROR",
+                "details": str(e)
+            }
+        }), 500
+
+@app.route('/api/settings/check', methods=['POST'])
+def check_server_settings():
+    try:
+        data = request.get_json()
+        url = data.get('url')
+        if not url:
+            return jsonify({
+                "error": {
+                    "message": "URL manquante",
+                    "code": "MISSING_URL"
+                }
+            }), 400
+            
+        # Temporarily set URL to check connection
+        original_url = ollama_client.base_url
+        ollama_client.base_url = url
+        status = ollama_client.check_connection()
+        ollama_client.base_url = original_url
+        
+        return jsonify(status)
+        
+    except Exception as e:
+        logger.error(f"Failed to check server settings: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            "error": {
+                "message": "Erreur lors de la vérification des paramètres",
+                "code": "CHECK_ERROR",
+                "details": str(e)
+            }
+        }), 500
+
 @app.route('/api/models')
 def get_models():
     try:

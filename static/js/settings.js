@@ -40,11 +40,29 @@ class SettingsManager {
                 body: JSON.stringify({ url: serverUrl })
             });
 
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+            let result;
+            try {
+                result = await response.json();
+            } catch (e) {
+                throw new Error('Format de réponse invalide');
             }
 
-            const result = await response.json();
+            if (!response.ok) {
+                if (response.status === 404) {
+                    throw new Error('Service non disponible');
+                }
+                throw new Error(result.error?.message || `Erreur ${response.status}`);
+            }
+
+            if (result.error) {
+                this.updateConnectionStatus('error', result.error.message);
+                if (result.error.code === "INSTALLATION_ERROR") {
+                    this.showInstallationInstructions();
+                    return;
+                }
+                return;
+            }
+
             if (result.status === 'connected') {
                 localStorage.setItem('ollamaServerUrl', serverUrl);
                 this.serverUrl = serverUrl;
@@ -53,9 +71,10 @@ class SettingsManager {
                     window.location.reload();
                 }, 1500);
             } else {
-                this.updateConnectionStatus('error', result.message || 'Échec de la connexion au serveur');
+                this.updateConnectionStatus('error', result.error?.message || 'Échec de la connexion au serveur');
             }
         } catch (error) {
+            console.error('Settings update failed:', error);
             this.updateConnectionStatus('error', `Erreur: ${error.message}`);
         }
     }
@@ -76,18 +95,55 @@ class SettingsManager {
                 body: JSON.stringify({ url: serverUrl })
             });
 
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+            let result;
+            try {
+                result = await response.json();
+            } catch (e) {
+                throw new Error('Format de réponse invalide');
             }
 
-            const result = await response.json();
+            if (!response.ok) {
+                if (response.status === 404) {
+                    throw new Error('Service de vérification non disponible');
+                }
+                throw new Error(result.error?.message || `Erreur ${response.status}`);
+            }
+
+            if (result.error) {
+                this.updateConnectionStatus('error', result.error.message);
+                if (result.error.code === "INSTALLATION_ERROR") {
+                    this.showInstallationInstructions();
+                    return;
+                }
+                return;
+            }
+
             this.updateConnectionStatus(
                 result.status === 'connected' ? 'success' : 'error',
-                result.message || (result.status === 'connected' ? 'Connecté' : 'Déconnecté')
+                result.status === 'connected' ? 
+                    `Connecté au serveur ${result.version || ''}` : 
+                    result.error?.message || 'Échec de la connexion'
             );
         } catch (error) {
-            this.updateConnectionStatus('error', `Erreur de vérification: ${error.message}`);
+            console.error('Connection check failed:', error);
+            this.updateConnectionStatus('error', `Erreur: ${error.message}`);
         }
+    }
+
+    showInstallationInstructions() {
+        const statusDiv = document.getElementById('connectionStatus');
+        statusDiv.className = 'alert alert-warning';
+        statusDiv.innerHTML = `
+            <h5 class="alert-heading">Installation d'Ollama requise</h5>
+            <p>Le service Ollama n'est pas installé sur le système.</p>
+            <hr>
+            <p class="mb-0">
+                Pour installer Ollama, suivez les instructions sur 
+                <a href="https://ollama.ai/download" target="_blank" class="alert-link">
+                    le site officiel d'Ollama
+                </a>
+            </p>
+        `;
     }
 
     updateConnectionStatus(type, message) {
