@@ -19,7 +19,10 @@ class ModelManager {
                     this.pullModel(modelName);
                 } else {
                     this.showError(
-                        "Veuillez entrer un nom de modèle valide",
+                        {
+                            message: "Veuillez entrer un nom de modèle valide",
+                            code: "INVALID_INPUT"
+                        },
                         document.getElementById('models-list'),
                         true
                     );
@@ -28,7 +31,7 @@ class ModelManager {
         }
     }
 
-    showError(message, targetElement, isTransient = false) {
+    showError(error, targetElement, isTransient = false) {
         if (!targetElement) return;
         
         const container = targetElement.closest('.table-responsive');
@@ -42,10 +45,12 @@ class ModelManager {
         const alert = document.createElement('div');
         alert.className = `alert alert-${isTransient ? 'warning' : 'danger'} mb-3`;
         
-        if (message.includes("n'est pas installé")) {
+        const errorMessage = this.formatErrorMessage(error);
+        
+        if (errorMessage.includes("n'est pas installé")) {
             alert.innerHTML = `
                 <h5 class="alert-heading">Installation requise</h5>
-                <p>${message}</p>
+                <p>${errorMessage}</p>
                 <hr>
                 <p class="mb-0">
                     Pour installer Ollama, suivez les instructions sur 
@@ -54,10 +59,10 @@ class ModelManager {
                     </a>.
                 </p>
             `;
-        } else if (message.includes("n'est pas démarré")) {
+        } else if (errorMessage.includes("n'est pas démarré")) {
             alert.innerHTML = `
                 <h5 class="alert-heading">Service non démarré</h5>
-                <p>${message}</p>
+                <p>${errorMessage}</p>
                 <hr>
                 <p class="mb-0">
                     Pour démarrer le service, exécutez la commande:
@@ -65,7 +70,17 @@ class ModelManager {
                 </p>
             `;
         } else {
-            alert.textContent = message || "Une erreur inattendue s'est produite";
+            if (error.code) {
+                alert.innerHTML = `
+                    <h5 class="alert-heading">${errorMessage}</h5>
+                    <p class="mb-0">
+                        <small class="text-muted">Code: ${error.code}</small>
+                        ${error.details ? `<br><small class="text-muted">Détails: ${error.details}</small>` : ''}
+                    </p>
+                `;
+            } else {
+                alert.textContent = errorMessage;
+            }
         }
         
         container.parentNode.insertBefore(alert, container);
@@ -75,32 +90,20 @@ class ModelManager {
         }
     }
 
-    getErrorMessage(error) {
+    formatErrorMessage(error) {
         if (!error) return "Une erreur inattendue s'est produite";
         if (typeof error === 'string') return error;
-        if (error.message) return error.message;
+        
         if (typeof error === 'object') {
+            if (error.error && typeof error.error === 'object') {
+                return error.error.message || "Une erreur inattendue s'est produite";
+            }
+            if (error.message) return error.message;
+            
             const messages = Object.values(error).filter(v => v);
             return messages.length ? messages.join('. ') : "Une erreur inattendue s'est produite";
         }
         return "Une erreur inattendue s'est produite";
-    }
-
-    formatErrorMessage(baseMessage, error, attempt = null) {
-        const errorMsg = this.getErrorMessage(error);
-        let message = `${baseMessage}: ${errorMsg}`;
-        
-        if (attempt !== null) {
-            message += ` (Tentative ${attempt})`;
-        }
-        
-        if (errorMsg.toLowerCase().includes('connexion')) {
-            message += "\nVérifiez que le service Ollama est démarré et accessible.";
-        } else if (errorMsg.toLowerCase().includes('installé')) {
-            message += "\nVisitez https://ollama.ai/download pour les instructions d'installation.";
-        }
-        
-        return message;
     }
 
     async retryOperation(operation, context) {
@@ -120,27 +123,25 @@ class ModelManager {
                 
                 const response = await operation();
                 if (!response) {
-                    throw new Error("Aucune réponse reçue du serveur");
+                    throw {
+                        message: "Aucune réponse reçue du serveur",
+                        code: "NO_RESPONSE"
+                    };
                 }
                 
-                if (response.ok) {
-                    const data = await response.json();
-                    if (!data) {
-                        throw new Error("Données de réponse vides");
-                    }
-                    
-                    if (data.error) {
-                        throw new Error(data.error);
-                    }
-                    
-                    return data;
+                const data = await response.json();
+                if (!data) {
+                    throw {
+                        message: "Données de réponse vides",
+                        code: "EMPTY_RESPONSE"
+                    };
                 }
                 
-                if (response.status === 404) {
-                    throw new Error("Service Ollama non disponible. Vérifiez la configuration du serveur.");
+                if (data.error) {
+                    throw data.error;
                 }
                 
-                throw new Error(`Le serveur a répondu avec le statut: ${response.status}`);
+                return data;
             } catch (error) {
                 retryCount++;
                 console.error(
@@ -149,13 +150,13 @@ class ModelManager {
                 );
                 
                 const isLastAttempt = retryCount === maxRetries;
-                const message = this.formatErrorMessage(
-                    baseErrorMessage,
-                    error,
-                    isLastAttempt ? null : retryCount
-                );
+                const errorObj = {
+                    message: baseErrorMessage,
+                    code: error.code || "OPERATION_FAILED",
+                    details: error.message || error.details || `Tentative ${retryCount}/${maxRetries}`
+                };
                 
-                this.showError(message, targetElement, !isLastAttempt);
+                this.showError(errorObj, targetElement, !isLastAttempt);
                 
                 if (retryCount < maxRetries) {
                     console.log(`Waiting ${delay}ms before retry...`);
@@ -207,7 +208,10 @@ class ModelManager {
     async pullModel(modelName) {
         if (!modelName) {
             this.showError(
-                "Veuillez spécifier un nom de modèle",
+                {
+                    message: "Veuillez spécifier un nom de modèle",
+                    code: "INVALID_INPUT"
+                },
                 document.getElementById('models-list'),
                 true
             );
@@ -234,7 +238,10 @@ class ModelManager {
     async stopModel(modelName) {
         if (!modelName) {
             this.showError(
-                "Nom du modèle non spécifié",
+                {
+                    message: "Nom du modèle non spécifié",
+                    code: "INVALID_INPUT"
+                },
                 document.getElementById('running-models-list'),
                 true
             );
