@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ollama Dashboard</title>
+    <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
+    <link href="/static/css/custom.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container py-4">
+        <h1 class="mb-4">Ollama Model Dashboard</h1>
+        
+        <!-- GPU Stats Card -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">GPU Statistics</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="gpu-stat">
+                            <h6>GPU Utilization</h6>
+                            <p id="gpu-utilization">--%</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="gpu-stat">
+                            <h6>Memory Usage</h6>
+                            <p id="memory-usage">-- / -- MB</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="gpu-stat">
+                            <h6>Temperature</h6>
+                            <p id="gpu-temp">--°C</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Models Management -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">Installed Models</h5>
+                <div class="input-group w-50">
+                    <input type="text" class="form-control" id="model-name" placeholder="Enter model name">
+                    <button class="btn btn-secondary" id="pull-model">Pull Model</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Model Name</th>
+                                <th>Size</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="models-list">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/gpu_monitor.js"></script>
+    <script src="/static/js/models.js"></script>
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
