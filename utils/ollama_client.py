@@ -14,7 +14,7 @@ class OllamaClient:
 
     def _get_server_url(self):
         """Get server URL from environment or default"""
-        return os.environ.get('OLLAMA_SERVER_URL', 'http://yblis.fr:11434')
+        return os.environ.get('OLLAMA_SERVER_URL', 'http://localhost:11434')
 
     def set_server_url(self, url):
         """Update server URL and check connection"""
